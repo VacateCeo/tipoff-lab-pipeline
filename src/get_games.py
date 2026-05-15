@@ -20,22 +20,37 @@ for season in SEASONS:
     all_games.append(df)
     time.sleep(1)
 
-games = pd.concat(all_games, ignore_index=True)
+raw = pd.concat(all_games, ignore_index=True)
 
-games = games[games["MATCHUP"].str.contains("vs\.")].copy()
+# separate home and away
+home = raw[raw["MATCHUP"].str.contains("vs\.")].copy()
+away = raw[raw["MATCHUP"].str.contains("@")].copy()
 
-games = games[[
-    "GAME_ID", "GAME_DATE", "TEAM_ID", "TEAM_ABBREVIATION",
-    "MATCHUP", "WL", "PTS"
-]].rename(columns={
+# rename away columns
+away = away.rename(columns={
+    "TEAM_ID": "away_id",
+    "TEAM_ABBREVIATION": "away_team",
+    "PTS": "away_pts",
+    "WL": "away_result"
+})
+
+home = home.rename(columns={
     "GAME_ID": "game_id",
     "GAME_DATE": "date",
     "TEAM_ID": "home_id",
     "TEAM_ABBREVIATION": "home_team",
-    "MATCHUP": "matchup",
-    "WL": "result",
-    "PTS": "home_pts"
+    "PTS": "home_pts",
+    "WL": "result"
 })
 
+# merge home and away on game_id
+games = home[["game_id", "date", "home_id", "home_team", "home_pts", "result"]].merge(
+    away[["GAME_ID", "away_id", "away_team", "away_pts"]].rename(columns={"GAME_ID": "game_id"}),
+    on="game_id",
+    how="inner"
+)
+
 games.to_parquet("data/games.parquet", index=False)
-print(f"Saved {len(games)} games to data/games.parquet")
+print(f"Saved {len(games)} games with home and away data")
+print(games.head())
+print(games.columns.tolist())
