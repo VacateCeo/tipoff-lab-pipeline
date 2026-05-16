@@ -18,8 +18,13 @@ def train():
     print(f"Train: {len(train)}, Val: {len(val)}")
 
     feature_cols = [
-        "spread_abs", "total", "home_win_pct", "home_avg_pts",
-        "home_rest_days", "home_b2b", "late_season", "month"
+        "spread_abs", "total",
+        "home_win_pct", "away_win_pct", "win_pct_diff",
+        "home_avg_pts", "away_avg_pts", "combined_avg_pts",
+        "home_avg_pts_allowed", "away_avg_pts_allowed",
+        "home_rest_days", "away_rest_days",
+        "home_b2b", "away_b2b",
+        "late_season", "month"
     ]
 
     X_train = train[feature_cols]

@@ -28,21 +28,31 @@ def parse_vegas_date(date_str, season_str):
         return None
 
 def get_rolling_team_stats(games_df, team_id, before_date, n=10):
-    team_games = games_df[
+    home_games = games_df[
         (games_df["home_id"] == team_id) &
         (games_df["date"] < before_date)
-    ].tail(n)
+    ][["date", "home_pts", "away_pts", "result"]].tail(n)
 
-    if len(team_games) < 3:
+    away_games = games_df[
+        (games_df["away_id"] == team_id) &
+        (games_df["date"] < before_date)
+    ][["date", "home_pts", "away_pts", "result"]].copy()
+    away_games["result"] = away_games["result"].map({"W": "L", "L": "W"})
+    away_games = away_games.tail(n)
+
+    all_games = pd.concat([home_games, away_games]).sort_values("date").tail(n)
+
+    if len(all_games) < 3:
         return None
 
-    avg_pts = team_games["home_pts"].mean()
-    win_pct = (team_games["result"] == "W").mean()
+    home_pts = home_games["home_pts"].mean() if len(home_games) > 0 else 100
+    away_pts_against = home_games["away_pts"].mean() if len(home_games) > 0 else 100
+    win_pct = (all_games["result"] == "W").mean()
 
     return {
-        "avg_pts": avg_pts,
+        "avg_pts": home_pts,
         "win_pct": win_pct,
-        "n_games": len(team_games)
+        "avg_pts_allowed": away_pts_against,
     }
 
 def build_features():
@@ -57,7 +67,6 @@ def build_features():
         lambda r: parse_vegas_date(r["date"], r["season"]), axis=1
     )
     vegas = vegas.dropna(subset=["real_date"])
-
     vegas["home_team"] = vegas["home_team"].str.strip().map(TEAM_NAME_MAP)
     vegas = vegas.dropna(subset=["home_team"])
 
@@ -78,29 +87,39 @@ def build_features():
         try:
             game_date = row["date"]
             home_id = row["home_id"]
+            away_id = row["away_id"]
 
             home_stats = get_rolling_team_stats(games, home_id, game_date)
-            if home_stats is None:
+            away_stats = get_rolling_team_stats(games, away_id, game_date)
+
+            if home_stats is None or away_stats is None:
                 continue
 
+            # rest days
             prev_home = games[
-                (games["home_id"] == home_id) &
+                ((games["home_id"] == home_id) | (games["away_id"] == home_id)) &
                 (games["date"] < game_date)
             ]["date"]
             home_rest = (game_date - prev_home.max()).days if len(prev_home) > 0 else 7
 
-            # fix swapped spread/total — spread should be < 30, total should be > 150
+            prev_away = games[
+                ((games["home_id"] == away_id) | (games["away_id"] == away_id)) &
+                (games["date"] < game_date)
+            ]["date"]
+            away_rest = (game_date - prev_away.max()).days if len(prev_away) > 0 else 7
+
+            # fix swapped spread/total
             raw_spread = row["spread"] if pd.notna(row["spread"]) else np.nan
             raw_total = row["total"] if pd.notna(row["total"]) else np.nan
-
             if pd.notna(raw_spread) and pd.notna(raw_total):
                 if abs(raw_spread) > 30:
                     raw_spread, raw_total = raw_total, raw_spread
-
             spread_abs = abs(raw_spread) if pd.notna(raw_spread) else np.nan
             total = raw_total if pd.notna(raw_total) else np.nan
 
             season_year = game_date.year if game_date.month >= 9 else game_date.year - 1
+
+            win_pct_diff = abs(home_stats["win_pct"] - away_stats["win_pct"])
 
             f = {
                 "game_id": row["game_id"],
@@ -108,9 +127,17 @@ def build_features():
                 "season_year": season_year,
                 "gei": row["gei"],
                 "home_win_pct": home_stats["win_pct"],
+                "away_win_pct": away_stats["win_pct"],
+                "win_pct_diff": win_pct_diff,
                 "home_avg_pts": home_stats["avg_pts"],
+                "away_avg_pts": away_stats["avg_pts"],
+                "home_avg_pts_allowed": home_stats["avg_pts_allowed"],
+                "away_avg_pts_allowed": away_stats["avg_pts_allowed"],
+                "combined_avg_pts": home_stats["avg_pts"] + away_stats["avg_pts"],
                 "home_rest_days": min(home_rest, 7),
+                "away_rest_days": min(away_rest, 7),
                 "home_b2b": int(home_rest <= 1),
+                "away_b2b": int(away_rest <= 1),
                 "late_season": int(game_date.month >= 2),
                 "month": game_date.month,
                 "spread_abs": spread_abs,
@@ -132,10 +159,6 @@ def build_features():
 
     print(f"\nBuilt features for {len(features_df)} games")
     print(f"Vegas coverage: {features_df['spread_abs'].notna().sum()} games")
-    print(f"Bad spreads remaining: {(features_df['spread_abs'] > 30).sum()}")
-    print(f"Bad totals remaining: {(features_df['total'] < 30).sum()}")
-    print(f"\nSpread stats:\n{features_df['spread_abs'].describe()}")
-    print(f"\nTotal stats:\n{features_df['total'].describe()}")
     features_df.to_parquet("data/features.parquet", index=False)
     print("Saved to data/features.parquet")
 
