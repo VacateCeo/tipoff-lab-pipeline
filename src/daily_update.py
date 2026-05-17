@@ -3,101 +3,168 @@ import numpy as np
 import pickle
 import sys
 import os
-from datetime import date, datetime
+import requests
+from datetime import date
 from supabase import create_client
 from dotenv import load_dotenv
-from nba_api.live.nba.endpoints import scoreboard
 
 sys.path.insert(0, "src")
 from build_features import get_rolling_team_stats
 from predict import predict_today
 
 load_dotenv()
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
-TEAM_ID_MAP = {
-    1610612737: "ATL", 1610612738: "BOS", 1610612751: "BKN", 1610612766: "CHA",
-    1610612741: "CHI", 1610612739: "CLE", 1610612742: "DAL", 1610612743: "DEN",
-    1610612765: "DET", 1610612744: "GSW", 1610612745: "HOU", 1610612754: "IND",
-    1610612746: "LAC", 1610612747: "LAL", 1610612763: "MEM", 1610612748: "MIA",
-    1610612749: "MIL", 1610612750: "MIN", 1610612740: "NOP", 1610612752: "NYK",
-    1610612760: "OKC", 1610612753: "ORL", 1610612755: "PHI", 1610612756: "PHX",
-    1610612757: "POR", 1610612758: "SAC", 1610612759: "SAS", 1610612761: "TOR",
-    1610612762: "UTA", 1610612764: "WAS"
+ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
+
+ESPN_TRICODE_FIX = {
+    "GS": "GSW",
+    "NO": "NOP",
+    "NY": "NYK",
+    "SA": "SAS",
+    "UTAH": "UTA",
+    "WSH": "WAS",
 }
 
-def get_todays_games():
-    """Fetch today's NBA games from the NBA API."""
-    games_data = scoreboard.ScoreBoard()
-    games_dict = games_data.get_dict()
-    
-    matchups = []
-    try:
-        games_list = games_dict["scoreboard"]["games"]
-        for game in games_list:
-            home_id = game["homeTeam"]["teamId"]
-            away_id = game["awayTeam"]["teamId"]
-            home = TEAM_ID_MAP.get(int(home_id))
-            away = TEAM_ID_MAP.get(int(away_id))
-            if home and away:
-                matchups.append((home, away, None, None))
-    except Exception as e:
-        print(f"Error parsing games: {e}")
-        return []
+FULL_NAME_TO_TRICODE = {
+    "Atlanta Hawks": "ATL", "Boston Celtics": "BOS", "Brooklyn Nets": "BKN",
+    "Charlotte Hornets": "CHA", "Chicago Bulls": "CHI", "Cleveland Cavaliers": "CLE",
+    "Dallas Mavericks": "DAL", "Denver Nuggets": "DEN", "Detroit Pistons": "DET",
+    "Golden State Warriors": "GSW", "Houston Rockets": "HOU", "Indiana Pacers": "IND",
+    "Los Angeles Clippers": "LAC", "Los Angeles Lakers": "LAL", "Memphis Grizzlies": "MEM",
+    "Miami Heat": "MIA", "Milwaukee Bucks": "MIL", "Minnesota Timberwolves": "MIN",
+    "New Orleans Pelicans": "NOP", "New York Knicks": "NYK", "Oklahoma City Thunder": "OKC",
+    "Orlando Magic": "ORL", "Philadelphia 76ers": "PHI", "Phoenix Suns": "PHX",
+    "Portland Trail Blazers": "POR", "Sacramento Kings": "SAC", "San Antonio Spurs": "SAS",
+    "Toronto Raptors": "TOR", "Utah Jazz": "UTA", "Washington Wizards": "WAS",
+}
 
-    print(f"Found {len(matchups)} games today: {matchups}")
+
+def normalize_tricode(code):
+    return ESPN_TRICODE_FIX.get(code, code)
+
+
+def get_odds():
+    """Fetch spread and total for today's NBA games from The Odds API."""
+    r = requests.get(ODDS_API_URL, params={
+        "apiKey": ODDS_API_KEY,
+        "regions": "us",
+        "markets": "spreads,totals",
+        "oddsFormat": "american",
+    }, timeout=10)
+    r.raise_for_status()
+    print(f"Odds API requests remaining: {r.headers.get('x-requests-remaining')}")
+
+    odds_map = {}  # (home_tricode, away_tricode) -> (spread, total)
+    for game in r.json():
+        home = FULL_NAME_TO_TRICODE.get(game["home_team"])
+        away = FULL_NAME_TO_TRICODE.get(game["away_team"])
+        if not home or not away:
+            print(f"Unknown team name: {game['home_team']} or {game['away_team']}")
+            continue
+
+        spread = None
+        total = None
+
+        # Use first bookmaker that has both markets
+        for bm in game.get("bookmakers", []):
+            markets = {m["key"]: m["outcomes"] for m in bm["markets"]}
+            if "spreads" in markets and "totals" in markets:
+                for outcome in markets["spreads"]:
+                    if FULL_NAME_TO_TRICODE.get(outcome["name"]) == home:
+                        spread = outcome["point"]
+                for outcome in markets["totals"]:
+                    if outcome["name"] == "Over":
+                        total = outcome["point"]
+                if spread is not None and total is not None:
+                    break
+
+        odds_map[(home, away)] = (spread, total)
+        print(f"  Odds: {away} @ {home} — spread: {spread}, total: {total}")
+
+    return odds_map
+
+
+def get_todays_games(game_date=None):
+    """Fetch today's NBA games from ESPN's scoreboard API."""
+    params = {}
+    if game_date:
+        params["dates"] = game_date.replace("-", "")
+
+    r = requests.get(ESPN_SCOREBOARD_URL, params=params, timeout=10)
+    r.raise_for_status()
+
+    matchups = []
+    for event in r.json().get("events", []):
+        comp = event["competitions"][0]
+        home = None
+        away = None
+        for team in comp["competitors"]:
+            tri = normalize_tricode(team["team"]["abbreviation"])
+            if team["homeAway"] == "home":
+                home = tri
+            else:
+                away = tri
+        if home and away:
+            matchups.append((home, away))
+
+    print(f"Found {len(matchups)} games: {matchups}")
     return matchups
+
 
 def run_daily_update(game_date=None):
     if game_date is None:
         game_date = date.today().strftime("%Y-%m-%d")
-
     print(f"Running daily update for {game_date}...")
 
     print("Loading model and data...")
     with open("data/model.pkl", "rb") as f:
         model = pickle.load(f)
-
     games = pd.read_parquet("data/games.parquet")
     games["date"] = pd.to_datetime(games["date"])
 
-    matchups = get_todays_games()
-    if not matchups:
+    matchups_raw = get_todays_games(game_date)
+    if not matchups_raw:
         print("No games today, exiting.")
         return
 
-    results = predict_today(game_date, matchups, games, model)
+    odds_map = get_odds()
 
+    matchups = []
+    for home, away in matchups_raw:
+        spread, total = odds_map.get((home, away), (None, None))
+        matchups.append((home, away, spread, total))
+
+    results = predict_today(game_date, matchups, games, model)
     if not results:
         print("No predictions generated.")
         return
 
-    print(f"Generated {len(results)} predictions")
+    print(f"\nGenerated {len(results)} predictions:")
     for r in results:
-        print(f"  {r['watchability']:.1f}/10 — {r['away_team']} @ {r['home_team']}: {r['reasons']}")
+        print(f"  {r['watchability']:.1f}/10 - {r['away_team']} @ {r['home_team']}: {r['reasons']}")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-    # delete existing predictions for today
     supabase.table("predictions").delete().eq("game_date", game_date).execute()
 
-    # insert new predictions
     rows = []
     for r in results:
+        spread, total = odds_map.get((r["home_team"], r["away_team"]), (None, None))
         rows.append({
             "game_date": game_date,
             "home_team": r["home_team"],
             "away_team": r["away_team"],
             "watchability": r["watchability"],
             "reasons": r["reasons"],
-            "spread": r.get("spread"),
-            "total": r.get("total"),
+            "spread": spread,
+            "total": total,
         })
-
     supabase.table("predictions").insert(rows).execute()
     print(f"Saved {len(rows)} predictions to Supabase.")
+
 
 if __name__ == "__main__":
     run_daily_update()
