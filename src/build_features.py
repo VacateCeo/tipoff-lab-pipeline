@@ -57,6 +57,49 @@ def get_team_star_power(games_df, team_id, game_date, pbp_dir='data/pbp'):
     top3 = sorted(player_avg.values(), reverse=True)[:3]
     return float(sum(top3))
 
+
+def get_team_star_names(games_df, team_id, game_date, pbp_dir='data/pbp'):
+    team_games = games_df[
+        ((games_df['home_id'] == team_id) | (games_df['away_id'] == team_id)) &
+        (games_df['date'] < game_date)
+    ].sort_values('date', ascending=False).head(20)
+
+    if len(team_games) == 0:
+        return []
+
+    player_game_pts = {}
+
+    for _, game_row in team_games.iterrows():
+        gid = game_row['game_id']
+        cache_key = (gid, team_id)
+        if cache_key in _pbp_player_cache:
+            game_player_pts = _pbp_player_cache[cache_key]
+        else:
+            pbp = _load_pbp(gid, pbp_dir)
+            if pbp is None:
+                _pbp_player_cache[cache_key] = {}
+                continue
+            team_plays = pbp[(pbp['teamId'] == team_id) & (pbp['playerName'].astype(str) != '')]
+            if len(team_plays) == 0:
+                _pbp_player_cache[cache_key] = {}
+                continue
+            extracted = team_plays['description'].str.extract(r'\((\d+) PTS?\)')[0].astype(float)
+            team_plays = team_plays.copy()
+            team_plays['_pts'] = extracted
+            game_player_pts = team_plays.groupby('playerName')['_pts'].max().dropna().to_dict()
+            _pbp_player_cache[cache_key] = game_player_pts
+
+        for pname, pts in game_player_pts.items():
+            player_game_pts.setdefault(pname, []).append(pts)
+
+    if not player_game_pts:
+        return []
+
+    player_avg = {p: float(np.mean(v)) for p, v in player_game_pts.items()}
+    top3 = sorted(player_avg.items(), key=lambda x: x[1], reverse=True)[:3]
+    return top3
+
+
 TEAM_NAME_MAP = {
     "Atlanta": "ATL", "Boston": "BOS", "Brooklyn": "BKN", "Charlotte": "CHA",
     "Chicago": "CHI", "Cleveland": "CLE", "Dallas": "DAL", "Denver": "DEN",

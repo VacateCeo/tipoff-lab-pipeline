@@ -6,6 +6,7 @@ from build_features import (
     get_rolling_team_stats,
     get_win_streak,
     get_team_star_power,
+    get_team_star_names,
 )
 
 
@@ -25,6 +26,10 @@ def calculate_watchability(
     month=11,
     home_star_power=0,
     away_star_power=0,
+    home_stars_out=0,
+    away_stars_out=0,
+    home_stars_dtd=0,
+    away_stars_dtd=0,
 ):
     # COMPETITIVENESS (50%)
     spread_score = max(0, (10 - spread_abs) / 10)
@@ -74,13 +79,19 @@ def calculate_watchability(
         penalty += 0.04
     if abs(home_rest_days - away_rest_days) >= 3:
         penalty += 0.05
+    if home_stars_out >= 2 or away_stars_out >= 2:
+        penalty += 0.20
+    elif home_stars_out >= 1 or away_stars_out >= 1:
+        penalty += 0.12
+    if home_stars_dtd >= 1 or away_stars_dtd >= 1:
+        penalty += 0.05
 
     raw = base - penalty
     score = min(10, max(0, raw * 10))
     return round(score, 1), raw, record_parity, tanking, star_power
 
 
-def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None, playoff_game_num=0):
+def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None, playoff_game_num=0, team_injuries={}):
     game_date = pd.Timestamp(game_date)
 
     home_row = games_df[games_df["home_team"] == home_team].head(1)
@@ -127,6 +138,24 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     away_win_streak = get_win_streak(games_df, away_id, game_date)
     home_star_power = get_team_star_power(games_df, home_id, game_date)
     away_star_power = get_team_star_power(games_df, away_id, game_date)
+    home_star_names = get_team_star_names(games_df, home_id, game_date)
+    away_star_names = get_team_star_names(games_df, away_id, game_date)
+    home_injured = team_injuries.get(home_team, {})
+    away_injured = team_injuries.get(away_team, {})
+    all_out = set(home_injured.get('out', []) + away_injured.get('out', []))
+    all_dtd = set(home_injured.get('dtd', []) + away_injured.get('dtd', []))
+
+    def match_injury(star_names, injury_set):
+        count = 0
+        for name, avg in star_names:
+            if avg >= 18 and any(part in name for part in injury_set):
+                count += 1
+        return count
+
+    home_stars_out = match_injury(home_star_names, all_out)
+    away_stars_out = match_injury(away_star_names, all_out)
+    home_stars_dtd = match_injury(home_star_names, all_dtd)
+    away_stars_dtd = match_injury(away_star_names, all_dtd)
 
     watchability, raw, record_parity, tanking, star_power_norm = calculate_watchability(
         spread_abs=spread_abs,
@@ -144,6 +173,10 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         month=month,
         home_star_power=home_star_power,
         away_star_power=away_star_power,
+        home_stars_out=home_stars_out,
+        away_stars_out=away_stars_out,
+        home_stars_dtd=home_stars_dtd,
+        away_stars_dtd=away_stars_dtd,
     )
 
     home_avg_pts = home_stats["avg_pts"]
@@ -185,6 +218,10 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         negative_reasons.append("struggling home team")
     if (home_win_streak >= 5 and away_win_streak <= -5) or (away_win_streak >= 5 and home_win_streak <= -5):
         negative_reasons.append("cold vs hot")
+    if home_stars_out >= 1 or away_stars_out >= 1:
+        negative_reasons.append("star player out")
+    if home_stars_dtd >= 1 or away_stars_dtd >= 1:
+        negative_reasons.append("star player questionable")
 
     all_reasons = positive_reasons + negative_reasons
     reasons = all_reasons[:3] if all_reasons else ["standard matchup"]
@@ -198,10 +235,10 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     }
 
 
-def predict_today(game_date, matchups, games_df, model):
+def predict_today(game_date, matchups, games_df, model, team_injuries={}):
     results = []
     for home, away, spread, total, playoff_game_num in matchups:
-        result = predict_game(home, away, game_date, games_df, model, spread, total, playoff_game_num)
+        result = predict_game(home, away, game_date, games_df, model, spread, total, playoff_game_num, team_injuries)
         if result:
             results.append(result)
 
