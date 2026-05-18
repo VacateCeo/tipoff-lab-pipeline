@@ -24,7 +24,9 @@ def train():
         "home_avg_pts_allowed", "away_avg_pts_allowed",
         "home_rest_days", "away_rest_days",
         "home_b2b", "away_b2b",
-        "late_season", "month"
+        "late_season", "month",
+        "is_playoffs", "home_win_streak", "away_win_streak",
+        "home_star_power", "away_star_power"
     ]
 
     X_train = train[feature_cols]

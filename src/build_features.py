@@ -1,6 +1,61 @@
 import pandas as pd
 import numpy as np
 import os
+import re
+
+# (game_id, team_id) -> {playerName: max_pts_in_game}
+_pbp_player_cache: dict = {}
+# game_id -> DataFrame | None
+_pbp_file_cache: dict = {}
+
+_PTS_RE = re.compile(r'\((\d+) PTS?\)')
+
+def _load_pbp(game_id, pbp_dir):
+    if game_id not in _pbp_file_cache:
+        path = os.path.join(pbp_dir, f"{game_id}.parquet")
+        _pbp_file_cache[game_id] = pd.read_parquet(path) if os.path.exists(path) else None
+    return _pbp_file_cache[game_id]
+
+def get_team_star_power(games_df, team_id, game_date, pbp_dir='data/pbp'):
+    team_games = games_df[
+        ((games_df["home_id"] == team_id) | (games_df["away_id"] == team_id)) &
+        (games_df["date"] < game_date)
+    ].sort_values("date", ascending=False).head(20)
+
+    if len(team_games) == 0:
+        return 0.0
+
+    player_game_pts: dict = {}
+
+    for _, game_row in team_games.iterrows():
+        gid = game_row["game_id"]
+        cache_key = (gid, team_id)
+        if cache_key in _pbp_player_cache:
+            game_player_pts = _pbp_player_cache[cache_key]
+        else:
+            pbp = _load_pbp(gid, pbp_dir)
+            if pbp is None:
+                _pbp_player_cache[cache_key] = {}
+                continue
+            team_plays = pbp[(pbp["teamId"] == team_id) & (pbp["playerName"].astype(str) != "")]
+            if len(team_plays) == 0:
+                _pbp_player_cache[cache_key] = {}
+                continue
+            extracted = team_plays["description"].str.extract(r'\((\d+) PTS?\)')[0].astype(float)
+            team_plays = team_plays.copy()
+            team_plays["_pts"] = extracted
+            game_player_pts = team_plays.groupby("playerName")["_pts"].max().dropna().to_dict()
+            _pbp_player_cache[cache_key] = game_player_pts
+
+        for pname, pts in game_player_pts.items():
+            player_game_pts.setdefault(pname, []).append(pts)
+
+    if not player_game_pts:
+        return 0.0
+
+    player_avg = {p: np.mean(v) for p, v in player_game_pts.items()}
+    top3 = sorted(player_avg.values(), reverse=True)[:3]
+    return float(sum(top3))
 
 TEAM_NAME_MAP = {
     "Atlanta": "ATL", "Boston": "BOS", "Brooklyn": "BKN", "Charlotte": "CHA",
@@ -26,6 +81,30 @@ def parse_vegas_date(date_str, season_str):
         return pd.Timestamp(year=actual_year, month=month, day=day)
     except:
         return None
+
+def get_win_streak(games_df, team_id, before_date):
+    team_games = games_df[
+        ((games_df["home_id"] == team_id) | (games_df["away_id"] == team_id)) &
+        (games_df["date"] < before_date)
+    ].sort_values("date", ascending=False)
+
+    if len(team_games) == 0:
+        return 0
+
+    streak = 0
+    for _, game in team_games.iterrows():
+        won = (game["home_id"] == team_id and game["result"] == "W") or \
+              (game["away_id"] == team_id and game["result"] == "L")
+        if streak == 0:
+            streak = 1 if won else -1
+        elif streak > 0 and won:
+            streak += 1
+        elif streak < 0 and not won:
+            streak -= 1
+        else:
+            break
+
+    return streak
 
 def get_rolling_team_stats(games_df, team_id, before_date, n=10):
     home_games = games_df[
@@ -91,6 +170,10 @@ def build_features():
 
             home_stats = get_rolling_team_stats(games, home_id, game_date)
             away_stats = get_rolling_team_stats(games, away_id, game_date)
+            home_streak = get_win_streak(games, home_id, game_date)
+            away_streak = get_win_streak(games, away_id, game_date)
+            home_star = get_team_star_power(games, home_id, game_date)
+            away_star = get_team_star_power(games, away_id, game_date)
 
             if home_stats is None or away_stats is None:
                 continue
@@ -142,6 +225,11 @@ def build_features():
                 "month": game_date.month,
                 "spread_abs": spread_abs,
                 "total": total,
+                "is_playoffs": int(game_date.month in (4, 5, 6)),
+                "home_win_streak": home_streak,
+                "away_win_streak": away_streak,
+                "home_star_power": home_star,
+                "away_star_power": away_star,
             }
             features.append(f)
 
