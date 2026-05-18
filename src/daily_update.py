@@ -108,7 +108,12 @@ def get_todays_games(game_date=None):
             else:
                 away = tri
         if home and away:
-            matchups.append((home, away))
+            playoff_game_num = 0
+            series = comp.get("series")
+            if series and series.get("type") == "playoff":
+                wins = [c.get("wins", 0) for c in comp.get("competitors", [])]
+                playoff_game_num = sum(wins) + 1
+            matchups.append((home, away, playoff_game_num))
 
     print(f"Found {len(matchups)} games: {matchups}")
     return matchups
@@ -133,9 +138,9 @@ def run_daily_update(game_date=None):
     odds_map = get_odds()
 
     matchups = []
-    for home, away in matchups_raw:
+    for home, away, playoff_game_num in matchups_raw:
         spread, total = odds_map.get((home, away), (None, None))
-        matchups.append((home, away, spread, total))
+        matchups.append((home, away, spread, total, playoff_game_num))
 
     results = predict_today(game_date, matchups, games, model)
     if not results:

@@ -80,7 +80,7 @@ def calculate_watchability(
     return round(score, 1), raw, record_parity, tanking, star_power
 
 
-def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None):
+def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None, playoff_game_num=0):
     game_date = pd.Timestamp(game_date)
 
     home_row = games_df[games_df["home_team"] == home_team].head(1)
@@ -120,7 +120,6 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     away_b2b = away_rest <= 1
     month = game_date.month
     is_playoffs = month in (4, 5, 6)
-    playoff_game_num = 0
     spread_abs = abs(spread) if spread is not None else 6.0
     total_val = total if total is not None else 217.0
 
@@ -133,7 +132,7 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         spread_abs=spread_abs,
         total=total_val,
         is_playoffs=is_playoffs,
-        playoff_game_num=0,
+        playoff_game_num=playoff_game_num,
         home_win_pct=home_win_pct,
         away_win_pct=away_win_pct,
         home_win_streak=home_win_streak,
@@ -201,8 +200,8 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
 
 def predict_today(game_date, matchups, games_df, model):
     results = []
-    for home, away, spread, total in matchups:
-        result = predict_game(home, away, game_date, games_df, model, spread, total)
+    for home, away, spread, total, playoff_game_num in matchups:
+        result = predict_game(home, away, game_date, games_df, model, spread, total, playoff_game_num)
         if result:
             results.append(result)
 
@@ -215,9 +214,9 @@ if __name__ == "__main__":
     games["date"] = pd.to_datetime(games["date"])
 
     matchups = [
-        ("BOS", "MIA", 5.5, 214.0),
-        ("LAL", "GSW", 3.0, 228.0),
-        ("DEN", "OKC", 4.0, 220.0),
+        ("BOS", "MIA", 5.5, 214.0, 0),
+        ("LAL", "GSW", 3.0, 228.0, 0),
+        ("DEN", "OKC", 4.0, 220.0, 0),
     ]
 
     results = predict_today("2024-03-01", matchups, games, model=None)
