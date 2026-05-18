@@ -180,9 +180,9 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         negative_reasons.append("potential blowout")
     if home_win_pct < 0.35 and away_win_pct < 0.35:
         negative_reasons.append("tanking matchup")
-    if away_win_pct < 0.40 and spread_abs >= 7:
+    if away_win_pct < 0.35 and spread_abs >= 7:
         negative_reasons.append("weak road team")
-    if home_win_pct < 0.40 and spread_abs >= 7:
+    if home_win_pct < 0.35 and spread_abs >= 7:
         negative_reasons.append("struggling home team")
     if (home_win_streak >= 5 and away_win_streak <= -5) or (away_win_streak >= 5 and home_win_streak <= -5):
         negative_reasons.append("cold vs hot")
