@@ -154,19 +154,19 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     combined_star_power = home_star_power + away_star_power
 
     positive_reasons = []
-    if spread_abs <= 4:
+    if spread_abs <= 5:
         positive_reasons.append("tight matchup")
     if is_playoffs:
         positive_reasons.append("playoff stakes")
-    if combined_star_power > 80:
+    if combined_star_power > 140:
         positive_reasons.append("star power on display")
-    if record_parity > 0.85:
+    if record_parity > 0.85 and (home_win_pct + away_win_pct) / 2 > 0.45:
         positive_reasons.append("evenly matched records")
     if home_win_streak >= 4 and away_win_streak >= 4:
         positive_reasons.append("momentum clash")
-    if home_avg_pts > 118 and away_avg_pts > 118:
+    if home_avg_pts > 115 and away_avg_pts > 115:
         positive_reasons.append("two elite offenses")
-    if home_avg_pts_allowed < 108 and away_avg_pts_allowed < 108:
+    if home_avg_pts_allowed < 110 and away_avg_pts_allowed < 110:
         positive_reasons.append("defensive battle")
     if is_playoffs and playoff_game_num >= 5:
         positive_reasons.append("must-win urgency")
@@ -180,9 +180,9 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         negative_reasons.append("potential blowout")
     if home_win_pct < 0.35 and away_win_pct < 0.35:
         negative_reasons.append("tanking matchup")
-    if away_win_pct < 0.40:
+    if away_win_pct < 0.40 and spread_abs >= 7:
         negative_reasons.append("weak road team")
-    if home_win_pct < 0.40:
+    if home_win_pct < 0.40 and spread_abs >= 7:
         negative_reasons.append("struggling home team")
     if (home_win_streak >= 5 and away_win_streak <= -5) or (away_win_streak >= 5 and home_win_streak <= -5):
         negative_reasons.append("cold vs hot")
