@@ -120,6 +120,7 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     away_b2b = away_rest <= 1
     month = game_date.month
     is_playoffs = month in (4, 5, 6)
+    playoff_game_num = 0
     spread_abs = abs(spread) if spread is not None else 6.0
     total_val = total if total is not None else 217.0
 
@@ -146,25 +147,54 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         away_star_power=away_star_power,
     )
 
-    reasons = []
-    if spread_abs <= 5:
-        reasons.append("tight matchup")
+    home_avg_pts = home_stats["avg_pts"]
+    away_avg_pts = away_stats["avg_pts"]
+    home_avg_pts_allowed = home_stats["avg_pts_allowed"]
+    away_avg_pts_allowed = away_stats["avg_pts_allowed"]
+    combined_star_power = home_star_power + away_star_power
+
+    positive_reasons = []
+    if spread_abs <= 4:
+        positive_reasons.append("tight matchup")
     if is_playoffs:
-        reasons.append("playoff stakes")
-    if home_b2b or away_b2b:
-        reasons.append("tired team")
-    if tanking:
-        reasons.append("tanking matchup")
-    if (home_star_power + away_star_power) > 80:
-        reasons.append("star power on display")
+        positive_reasons.append("playoff stakes")
+    if combined_star_power > 80:
+        positive_reasons.append("star power on display")
     if record_parity > 0.85:
-        reasons.append("evenly matched records")
+        positive_reasons.append("evenly matched records")
+    if home_win_streak >= 4 and away_win_streak >= 4:
+        positive_reasons.append("momentum clash")
+    if home_avg_pts > 118 and away_avg_pts > 118:
+        positive_reasons.append("two elite offenses")
+    if home_avg_pts_allowed < 108 and away_avg_pts_allowed < 108:
+        positive_reasons.append("defensive battle")
+    if is_playoffs and playoff_game_num >= 5:
+        positive_reasons.append("must-win urgency")
+
+    negative_reasons = []
+    if home_b2b or away_b2b:
+        negative_reasons.append("back-to-back fatigue")
+    if abs(home_rest_days - away_rest_days) >= 3:
+        negative_reasons.append("lopsided rest advantage")
+    if spread_abs >= 10:
+        negative_reasons.append("potential blowout")
+    if home_win_pct < 0.35 and away_win_pct < 0.35:
+        negative_reasons.append("tanking matchup")
+    if away_win_pct < 0.40:
+        negative_reasons.append("weak road team")
+    if home_win_pct < 0.40:
+        negative_reasons.append("struggling home team")
+    if (home_win_streak >= 5 and away_win_streak <= -5) or (away_win_streak >= 5 and home_win_streak <= -5):
+        negative_reasons.append("cold vs hot")
+
+    all_reasons = positive_reasons + negative_reasons
+    reasons = all_reasons[:3] if all_reasons else ["standard matchup"]
 
     return {
         "home_team": home_team,
         "away_team": away_team,
         "watchability": watchability,
-        "reasons": reasons[:3],
+        "reasons": reasons,
         "raw_score": round(float(raw), 4),
     }
 
