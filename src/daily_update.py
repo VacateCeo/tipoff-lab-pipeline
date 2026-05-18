@@ -58,7 +58,7 @@ def get_odds():
     r.raise_for_status()
     print(f"Odds API requests remaining: {r.headers.get('x-requests-remaining')}")
 
-    odds_map = {}  # (home_tricode, away_tricode) -> (spread, total)
+    odds_map = {}
     for game in r.json():
         home = FULL_NAME_TO_TRICODE.get(game["home_team"])
         away = FULL_NAME_TO_TRICODE.get(game["away_team"])
@@ -69,7 +69,6 @@ def get_odds():
         spread = None
         total = None
 
-        # Use first bookmaker that has both markets
         for bm in game.get("bookmakers", []):
             markets = {m["key"]: m["outcomes"] for m in bm["markets"]}
             if "spreads" in markets and "totals" in markets:
@@ -148,7 +147,7 @@ def run_daily_update(game_date=None):
         print(f"  {r['watchability']:.1f}/10 - {r['away_team']} @ {r['home_team']}: {r['reasons']}")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    supabase.table("predictions").delete().eq("game_date", game_date).execute()
+    supabase.table("predictions").delete().eq("game_date", str(game_date)).execute()
 
     rows = []
     for r in results:

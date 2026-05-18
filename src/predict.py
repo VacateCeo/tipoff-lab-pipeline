@@ -1,33 +1,84 @@
 import pandas as pd
 import numpy as np
-import pickle
 import sys
 sys.path.insert(0, "src")
-from build_features import get_rolling_team_stats, parse_vegas_date, TEAM_NAME_MAP
+from build_features import (
+    get_rolling_team_stats,
+    get_win_streak,
+    get_team_star_power,
+)
 
-FEATURE_COLS = [
-    "spread_abs", "total",
-    "home_win_pct", "away_win_pct", "win_pct_diff",
-    "home_avg_pts", "away_avg_pts", "combined_avg_pts",
-    "home_avg_pts_allowed", "away_avg_pts_allowed",
-    "home_rest_days", "away_rest_days",
-    "home_b2b", "away_b2b",
-    "late_season", "month"
-]
 
-PHRASE_TEMPLATES = {
-    "spread_abs":            ("expected blowout", "expected to be close"),
-    "win_pct_diff":          ("mismatched records", "evenly matched teams"),
-    "combined_avg_pts":      ("low-scoring styles", "both teams scoring well lately"),
-    "home_avg_pts_allowed":  ("home team stingy defense", "home team leaking points"),
-    "away_avg_pts_allowed":  ("away team stingy defense", "away team leaking points"),
-    "away_win_pct":          ("away team struggling", "strong away team"),
-    "home_win_pct":          ("home team struggling", "strong home team"),
-    "total":                 ("low Vegas total", "high Vegas total"),
-    "late_season":           ("early season game", "late season stakes"),
-    "home_b2b":              ("home team fresh", "home team on back-to-back"),
-    "away_b2b":              ("away team fresh", "away team on back-to-back"),
-}
+def calculate_watchability(
+    spread_abs,
+    total,
+    is_playoffs=False,
+    playoff_game_num=0,
+    home_win_pct=0.5,
+    away_win_pct=0.5,
+    home_win_streak=0,
+    away_win_streak=0,
+    home_b2b=False,
+    away_b2b=False,
+    home_rest_days=2,
+    away_rest_days=2,
+    month=11,
+    home_star_power=0,
+    away_star_power=0,
+):
+    # COMPETITIVENESS (50%)
+    spread_score = max(0, (10 - spread_abs) / 10)
+
+    # PACE BONUS
+    total_score = min(1, max(0, (total - 200) / 40))
+
+    # STAKES
+    if is_playoffs:
+        stakes_score = 0.5 + (playoff_game_num / 7) * 0.5
+    else:
+        avg_win_pct = (home_win_pct + away_win_pct) / 2
+        stakes_score = avg_win_pct
+        if month in [3, 4]:
+            stakes_score = min(1, stakes_score + 0.15)
+
+    # MATCHUP QUALITY
+    record_parity = 1 - abs(home_win_pct - away_win_pct)
+    streak_parity = 1 - min(1, abs(home_win_streak - away_win_streak) / 8)
+    star_power = min(1, (home_star_power + away_star_power) / 150)
+    matchup_score = (record_parity * 0.4 + streak_parity * 0.3 + star_power * 0.3)
+
+    # WEIGHTED BASE — playoff weighting boosts stakes
+    if is_playoffs:
+        base = (
+            spread_score * 0.50 +
+            total_score * 0.10 +
+            stakes_score * 0.35 +
+            matchup_score * 0.05
+        )
+    else:
+        base = (
+            spread_score * 0.50 +
+            total_score * 0.15 +
+            stakes_score * 0.20 +
+            matchup_score * 0.15
+        )
+
+    # PENALTIES
+    penalty = 0
+    tanking = home_win_pct < 0.35 and away_win_pct < 0.35 and month in [3, 4]
+    if tanking:
+        penalty += 0.15
+    if home_b2b:
+        penalty += 0.04
+    if away_b2b:
+        penalty += 0.04
+    if abs(home_rest_days - away_rest_days) >= 3:
+        penalty += 0.05
+
+    raw = base - penalty
+    score = min(10, max(0, raw * 10))
+    return round(score, 1), raw, record_parity, tanking, star_power
+
 
 def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None):
     game_date = pd.Timestamp(game_date)
@@ -61,57 +112,62 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     ]["date"]
     away_rest = (game_date - prev_away.max()).days if len(prev_away) > 0 else 7
 
+    home_win_pct = home_stats["win_pct"]
+    away_win_pct = away_stats["win_pct"]
+    home_rest_days = min(home_rest, 7)
+    away_rest_days = min(away_rest, 7)
+    home_b2b = home_rest <= 1
+    away_b2b = away_rest <= 1
+    month = game_date.month
+    is_playoffs = month in (4, 5, 6)
     spread_abs = abs(spread) if spread is not None else 6.0
     total_val = total if total is not None else 217.0
 
-    win_pct_diff = abs(home_stats["win_pct"] - away_stats["win_pct"])
+    home_win_streak = get_win_streak(games_df, home_id, game_date)
+    away_win_streak = get_win_streak(games_df, away_id, game_date)
+    home_star_power = get_team_star_power(games_df, home_id, game_date)
+    away_star_power = get_team_star_power(games_df, away_id, game_date)
 
-    features = {
-        "spread_abs": spread_abs,
-        "total": total_val,
-        "home_win_pct": home_stats["win_pct"],
-        "away_win_pct": away_stats["win_pct"],
-        "win_pct_diff": win_pct_diff,
-        "home_avg_pts": home_stats["avg_pts"],
-        "away_avg_pts": away_stats["avg_pts"],
-        "combined_avg_pts": home_stats["avg_pts"] + away_stats["avg_pts"],
-        "home_avg_pts_allowed": home_stats["avg_pts_allowed"],
-        "away_avg_pts_allowed": away_stats["avg_pts_allowed"],
-        "home_rest_days": min(home_rest, 7),
-        "away_rest_days": min(away_rest, 7),
-        "home_b2b": int(home_rest <= 1),
-        "away_b2b": int(away_rest <= 1),
-        "late_season": int(game_date.month >= 2),
-        "month": game_date.month,
-    }
+    watchability, raw, record_parity, tanking, star_power_norm = calculate_watchability(
+        spread_abs=spread_abs,
+        total=total_val,
+        is_playoffs=is_playoffs,
+        playoff_game_num=0,
+        home_win_pct=home_win_pct,
+        away_win_pct=away_win_pct,
+        home_win_streak=home_win_streak,
+        away_win_streak=away_win_streak,
+        home_b2b=home_b2b,
+        away_b2b=away_b2b,
+        home_rest_days=home_rest_days,
+        away_rest_days=away_rest_days,
+        month=month,
+        home_star_power=home_star_power,
+        away_star_power=away_star_power,
+    )
 
-    X = pd.DataFrame([features])[FEATURE_COLS]
-    raw_score = model.predict(X)[0]
-
-    watchability = round(float(np.clip((raw_score + 2.5) / 5.0 * 10, 0, 10)), 1)
-
-    try:
-        import shap
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X)
-        shap_series = pd.Series(shap_values[0], index=FEATURE_COLS)
-        top_features = shap_series.abs().nlargest(3).index.tolist()
-
-        reasons = []
-        for feat in top_features:
-            if feat in PHRASE_TEMPLATES:
-                low, high = PHRASE_TEMPLATES[feat]
-                reasons.append(high if shap_series[feat] > 0 else low)
-    except:
-        reasons = ["based on team form and Vegas lines"]
+    reasons = []
+    if spread_abs <= 5:
+        reasons.append("tight matchup")
+    if is_playoffs:
+        reasons.append("playoff stakes")
+    if home_b2b or away_b2b:
+        reasons.append("tired team")
+    if tanking:
+        reasons.append("tanking matchup")
+    if (home_star_power + away_star_power) > 80:
+        reasons.append("star power on display")
+    if record_parity > 0.85:
+        reasons.append("evenly matched records")
 
     return {
         "home_team": home_team,
         "away_team": away_team,
         "watchability": watchability,
-        "reasons": reasons,
-        "raw_score": round(float(raw_score), 4),
+        "reasons": reasons[:3],
+        "raw_score": round(float(raw), 4),
     }
+
 
 def predict_today(game_date, matchups, games_df, model):
     results = []
@@ -123,11 +179,8 @@ def predict_today(game_date, matchups, games_df, model):
     results.sort(key=lambda x: x["watchability"], reverse=True)
     return results
 
-if __name__ == "__main__":
-    print("Loading model and data...")
-    with open("data/model.pkl", "rb") as f:
-        model = pickle.load(f)
 
+if __name__ == "__main__":
     games = pd.read_parquet("data/games.parquet")
     games["date"] = pd.to_datetime(games["date"])
 
@@ -137,7 +190,7 @@ if __name__ == "__main__":
         ("DEN", "OKC", 4.0, 220.0),
     ]
 
-    results = predict_today("2024-03-01", matchups, games, model)
+    results = predict_today("2024-03-01", matchups, games, model=None)
 
     print("\nTonight's Watchability Rankings:")
     print("-" * 40)
