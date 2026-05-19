@@ -32,7 +32,8 @@ def calculate_watchability(
     away_stars_dtd=0,
 ):
     # COMPETITIVENESS (50%)
-    spread_score = max(0, (10 - spread_abs) / 10)
+    spread_score = max(0, (14 - spread_abs) / 14)
+    playoff_spread_bonus = 0.08 if (is_playoffs and spread_abs <= 7) else 0.0
 
     # PACE BONUS
     total_score = min(1, max(0, (total - 200) / 40))
@@ -58,7 +59,8 @@ def calculate_watchability(
             spread_score * 0.50 +
             total_score * 0.10 +
             stakes_score * 0.35 +
-            matchup_score * 0.05
+            matchup_score * 0.05 +
+            playoff_spread_bonus
         )
     else:
         base = (
@@ -148,8 +150,12 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     def match_injury(star_names, injury_set):
         count = 0
         for name, avg in star_names:
-            if avg >= 18 and any(part in name for part in injury_set):
-                count += 1
+            if avg >= 14:
+                for injured_name in injury_set:
+                    injured_parts = injured_name.lower().split()
+                    if any(part in name.lower() for part in injured_parts):
+                        count += 1
+                        break
         return count
 
     home_stars_out = match_injury(home_star_names, all_out)
@@ -188,6 +194,8 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     positive_reasons = []
     if spread_abs <= 5:
         positive_reasons.append("tight matchup")
+    elif spread_abs <= 7 and is_playoffs:
+        positive_reasons.append('competitive playoff spread')
     if is_playoffs:
         positive_reasons.append("playoff stakes")
     if combined_star_power > 140:
