@@ -134,7 +134,8 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     month = game_date.month
     is_playoffs = month in (4, 5, 6)
     spread_abs = abs(spread) if spread is not None else 6.0
-    total_val = total if total is not None else 217.0
+    default_total = 210.0 if is_playoffs else 217.0
+    total_val = total if total is not None else default_total
 
     home_win_streak = get_win_streak(games_df, home_id, game_date)
     away_win_streak = get_win_streak(games_df, away_id, game_date)
