@@ -2,7 +2,7 @@ name: Daily NBA Predictions
 
 on:
   schedule:
-    - cron: '0 9 * * *'   # 9:00 AM UTC = 2:00 AM PT — fetch previous night results
+    - cron: '30 6 * * *'  # 6:30 AM UTC = 11:30 PM PT — fetch previous night results
     - cron: '0 7 * * *'   # 7:00 AM UTC = 12:00 AM PT — daily predictions
     - cron: '0 14 * * *'  # 2:00 PM UTC = 7:00 AM PT — backup results fetch
   workflow_dispatch:  # allows manual trigger from GitHub
