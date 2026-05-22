@@ -31,67 +31,76 @@ def calculate_watchability(
     home_stars_dtd=0,
     away_stars_dtd=0,
 ):
-    # COMPETITIVENESS (50%)
-    spread_score = max(0, (14 - spread_abs) / 14)
-    playoff_spread_bonus = 0.08 if (is_playoffs and spread_abs <= 7) else 0.0
-
-    # PACE BONUS
-    total_score = min(1, max(0, (total - 200) / 40))
-
-    # STAKES
-    if is_playoffs:
-        stakes_score = 0.5 + (playoff_game_num / 7) * 0.5
-    else:
-        avg_win_pct = (home_win_pct + away_win_pct) / 2
-        stakes_score = avg_win_pct
-        if month in [3, 4]:
-            stakes_score = min(1, stakes_score + 0.15)
-
-    # MATCHUP QUALITY
+    badges = []
+    combined_star_power = home_star_power + away_star_power
     record_parity = 1 - abs(home_win_pct - away_win_pct)
-    streak_parity = 1 - min(1, abs(home_win_streak - away_win_streak) / 8)
-    star_power = min(1, (home_star_power + away_star_power) / 150)
-    matchup_score = (record_parity * 0.4 + streak_parity * 0.3 + star_power * 0.3)
+    avg_win_pct = (home_win_pct + away_win_pct) / 2
 
-    # WEIGHTED BASE — playoff weighting boosts stakes
-    if is_playoffs:
-        base = (
-            spread_score * 0.50 +
-            total_score * 0.10 +
-            stakes_score * 0.35 +
-            matchup_score * 0.05 +
-            playoff_spread_bonus
-        )
-    else:
-        base = (
-            spread_score * 0.50 +
-            total_score * 0.15 +
-            stakes_score * 0.20 +
-            matchup_score * 0.15
-        )
+    # POSITIVE BADGES
+    if is_playoffs and playoff_game_num >= 5:
+        badges.append(("must-win urgency", 2.5))
+    elif is_playoffs:
+        badges.append(("playoff stakes", 2.0))
 
-    # PENALTIES
-    penalty = 0
-    tanking = home_win_pct < 0.35 and away_win_pct < 0.35 and month in [3, 4]
-    if tanking:
-        penalty += 0.15
-    if home_b2b:
-        penalty += 0.04
-    if away_b2b:
-        penalty += 0.04
-    if abs(home_rest_days - away_rest_days) >= 3:
-        penalty += 0.05
+    if spread_abs <= 3:
+        badges.append(("pick-em game", 2.0))
+    elif spread_abs <= 5:
+        badges.append(("tight spread", 1.5))
+    elif spread_abs <= 7:
+        badges.append(("competitive spread", 0.8))
+
+    if combined_star_power > 140:
+        badges.append(("star power matchup", 1.5))
+    elif combined_star_power > 100:
+        badges.append(("quality stars", 0.8))
+
+    if record_parity > 0.85 and avg_win_pct > 0.50:
+        badges.append(("evenly matched", 1.2))
+
+    if home_win_streak >= 4 and away_win_streak >= 4:
+        badges.append(("momentum clash", 1.2))
+
+    if home_win_pct > 0.55 and away_win_pct > 0.55:
+        badges.append(("two good teams", 1.0))
+
+    if month in [3, 4] and not is_playoffs and avg_win_pct > 0.50:
+        badges.append(("playoff race", 1.0))
+
+    # NEGATIVE BADGES
     if home_stars_out >= 2 or away_stars_out >= 2:
-        penalty += 0.20
+        badges.append(("multiple stars out", -2.5))
     elif home_stars_out >= 1 or away_stars_out >= 1:
-        penalty += 0.12
-    if home_stars_dtd >= 1 or away_stars_dtd >= 1:
-        penalty += 0.05
+        badges.append(("star player out", -1.5))
 
-    raw = base - penalty
-    score_raw = min(10, max(0, raw * 10))
-    score = round(min(10, max(0, (score_raw - 5.53) * 2.79 + 7.58)), 1)
-    return round(score, 1), raw, record_parity, tanking, star_power
+    if home_stars_dtd >= 1 or away_stars_dtd >= 1:
+        badges.append(("star questionable", -0.5))
+
+    if spread_abs >= 12:
+        badges.append(("potential blowout", -1.8))
+    elif spread_abs >= 9:
+        badges.append(("lopsided matchup", -1.0))
+
+    if home_win_pct < 0.35 and away_win_pct < 0.35 and month in [3, 4]:
+        badges.append(("tanking matchup", -1.5))
+
+    if home_b2b or away_b2b:
+        badges.append(("back-to-back fatigue", -0.8))
+
+    if abs(home_rest_days - away_rest_days) >= 3:
+        badges.append(("rest disadvantage", -0.6))
+
+    # SCORE
+    base = 5.0
+    total_adjustment = sum(w for _, w in badges)
+    raw_score = base + total_adjustment
+    score = round(min(10, max(1, raw_score)), 1)
+
+    positive = sorted([(b, w) for b, w in badges if w > 0], key=lambda x: -x[1])
+    negative = sorted([(b, w) for b, w in badges if w < 0], key=lambda x: x[1])
+    top_badges = [b for b, _ in (positive + negative)[:3]]
+    all_badges = [b for b, _ in (positive + negative)]
+
+    return score, raw_score, record_parity, (home_win_pct < 0.35 and away_win_pct < 0.35 and month in [3, 4]), min(1, combined_star_power / 150), top_badges, all_badges
 
 
 def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None, playoff_game_num=0, team_injuries={}):
@@ -165,7 +174,7 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     home_stars_dtd = match_injury(home_star_names, all_dtd)
     away_stars_dtd = match_injury(away_star_names, all_dtd)
 
-    watchability, raw, record_parity, tanking, star_power_norm = calculate_watchability(
+    watchability, raw, record_parity, tanking, star_power_norm, reasons, all_badges = calculate_watchability(
         spread_abs=spread_abs,
         total=total_val,
         is_playoffs=is_playoffs,
@@ -187,60 +196,15 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         away_stars_dtd=away_stars_dtd,
     )
 
-    home_avg_pts = home_stats["avg_pts"]
-    away_avg_pts = away_stats["avg_pts"]
-    home_avg_pts_allowed = home_stats["avg_pts_allowed"]
-    away_avg_pts_allowed = away_stats["avg_pts_allowed"]
-    combined_star_power = home_star_power + away_star_power
-
-    positive_reasons = []
-    if spread_abs <= 5:
-        positive_reasons.append("tight matchup")
-    elif spread_abs <= 7 and is_playoffs:
-        positive_reasons.append('competitive playoff spread')
-    if is_playoffs:
-        positive_reasons.append("playoff stakes")
-    if combined_star_power > 140:
-        positive_reasons.append("star power on display")
-    if record_parity > 0.85 and (home_win_pct + away_win_pct) / 2 > 0.45:
-        positive_reasons.append("evenly matched records")
-    if home_win_streak >= 4 and away_win_streak >= 4:
-        positive_reasons.append("momentum clash")
-    if home_avg_pts > 115 and away_avg_pts > 115:
-        positive_reasons.append("two elite offenses")
-    if home_avg_pts_allowed < 110 and away_avg_pts_allowed < 110:
-        positive_reasons.append("defensive battle")
-    if is_playoffs and playoff_game_num >= 5:
-        positive_reasons.append("must-win urgency")
-
-    negative_reasons = []
-    if home_b2b or away_b2b:
-        negative_reasons.append("back-to-back fatigue")
-    if abs(home_rest_days - away_rest_days) >= 3:
-        negative_reasons.append("lopsided rest advantage")
-    if spread_abs >= 10:
-        negative_reasons.append("potential blowout")
-    if home_win_pct < 0.35 and away_win_pct < 0.35:
-        negative_reasons.append("tanking matchup")
-    if away_win_pct < 0.35 and spread_abs >= 7:
-        negative_reasons.append("weak road team")
-    if home_win_pct < 0.35 and spread_abs >= 7:
-        negative_reasons.append("struggling home team")
-    if (home_win_streak >= 5 and away_win_streak <= -5) or (away_win_streak >= 5 and home_win_streak <= -5):
-        negative_reasons.append("cold vs hot")
-    if home_stars_out >= 1 or away_stars_out >= 1:
-        negative_reasons.append("star player out")
-    if home_stars_dtd >= 1 or away_stars_dtd >= 1:
-        negative_reasons.append("star player questionable")
-
-    all_reasons = positive_reasons + negative_reasons
-    reasons = all_reasons[:3] if all_reasons else ["standard matchup"]
+    if not reasons:
+        reasons = ["standard matchup"]
 
     return {
         "home_team": home_team,
         "away_team": away_team,
         "watchability": watchability,
         "reasons": reasons,
+        "badges": all_badges,
         "raw_score": round(float(raw), 4),
     }
 
@@ -271,6 +235,6 @@ if __name__ == "__main__":
     print("\nTonight's Watchability Rankings:")
     print("-" * 40)
     for r in results:
-        print(f"{r['watchability']:.1f}/10 — {r['away_team']} @ {r['home_team']}")
+        print(f"{r['watchability']:.1f}/10 - {r['away_team']} @ {r['home_team']}")
         print(f"   {', '.join(r['reasons'])}")
         print()

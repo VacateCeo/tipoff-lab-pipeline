@@ -169,6 +169,7 @@ def run_daily_update(game_date=None):
             "reasons": r["reasons"],
             "spread": spread,
             "total": total,
+            "badges": r.get("badges", []),
             "injury_note": ", ".join(
                 team_injuries.get(r["home_team"], {}).get("out", [])[:2] +
                 team_injuries.get(r["away_team"], {}).get("out", [])[:2]
