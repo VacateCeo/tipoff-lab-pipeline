@@ -89,7 +89,8 @@ def calculate_watchability(
         penalty += 0.05
 
     raw = base - penalty
-    score = min(10, max(0, raw * 10))
+    score_raw = min(10, max(0, raw * 10))
+    score = round(min(10, max(0, (score_raw - 5.53) * 2.79 + 7.58)), 1)
     return round(score, 1), raw, record_parity, tanking, star_power
 
 

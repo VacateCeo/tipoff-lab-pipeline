@@ -24,19 +24,25 @@ def compute_excitement(win_probabilities):
         return None
     probs = [p['homeWinPercentage'] for p in win_probabilities]
 
-    # detect OT by volume of plays (regulation ~400-450, OT adds ~60-80 per period)
     went_ot = len(probs) > 470
     went_double_ot = len(probs) > 540
 
-    cutoff = int(len(probs) * 0.75)
-    crunch = probs[cutoff:]
-    if not crunch:
-        crunch = probs
-    crunch_avg_distance = float(np.mean([abs(p - 0.5) for p in crunch]))
-    min_wp = float(min(min(probs), 1 - max(probs)))
-    excitement = (1 - crunch_avg_distance) * 7 + (1 - min_wp) * 3
+    # Skip first 20% of plays so tipoff 50/50 doesn't inflate min_wp
+    start = int(len(probs) * 0.20)
+    probs_trimmed = probs[start:] if len(probs) > start else probs
 
-    # OT floors
+    # Crunch time = last 25% of plays
+    cutoff = int(len(probs_trimmed) * 0.75)
+    crunch = probs_trimmed[cutoff:]
+    if not crunch:
+        crunch = probs_trimmed
+
+    crunch_avg_distance = float(np.mean([abs(p - 0.5) for p in crunch]))
+    min_wp = float(min([abs(p - 0.5) for p in probs_trimmed]))
+
+    # min_wp now = how close game got to 50/50 AFTER early game
+    excitement = (1 - crunch_avg_distance) * 7 + (1 - min_wp * 2) * 3
+
     if went_double_ot:
         excitement = max(excitement, 9.3)
     elif went_ot:
