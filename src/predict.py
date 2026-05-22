@@ -15,6 +15,8 @@ def calculate_watchability(
     total,
     is_playoffs=False,
     playoff_game_num=0,
+    playoff_round=None,
+    elimination_game=False,
     home_win_pct=0.5,
     away_win_pct=0.5,
     home_win_streak=0,
@@ -23,9 +25,17 @@ def calculate_watchability(
     away_b2b=False,
     home_rest_days=2,
     away_rest_days=2,
+    home_3in4=False,
+    away_3in4=False,
     month=11,
     home_star_power=0,
     away_star_power=0,
+    home_top_star_avg=0,
+    away_top_star_avg=0,
+    home_avg_pts=110,
+    away_avg_pts=110,
+    home_conf_rank=15,
+    away_conf_rank=15,
     home_stars_out=0,
     away_stars_out=0,
     home_stars_dtd=0,
@@ -36,8 +46,14 @@ def calculate_watchability(
     record_parity = 1 - abs(home_win_pct - away_win_pct)
     avg_win_pct = (home_win_pct + away_win_pct) / 2
 
-    # POSITIVE BADGES
-    if is_playoffs and playoff_game_num >= 5:
+    # POSITIVE BADGES - only one round-tier badge fires
+    if playoff_round == "Finals":
+        badges.append(("NBA Finals", 3.0))
+    elif playoff_round in ("ECF", "WCF"):
+        badges.append(("conference finals", 2.5))
+    elif elimination_game:
+        badges.append(("elimination game", 2.0))
+    elif is_playoffs and playoff_game_num >= 5:
         badges.append(("must-win urgency", 2.5))
     elif is_playoffs:
         badges.append(("playoff stakes", 2.0))
@@ -53,6 +69,15 @@ def calculate_watchability(
         badges.append(("star power matchup", 1.5))
     elif combined_star_power > 100:
         badges.append(("quality stars", 0.8))
+
+    if max(home_top_star_avg, away_top_star_avg) >= 28:
+        badges.append(("MVP candidate", 1.0))
+
+    if home_conf_rank <= 2 and away_conf_rank <= 2:
+        badges.append(("top-2 matchup", 1.5))
+
+    if home_avg_pts >= 118 and away_avg_pts >= 118:
+        badges.append(("high-pace shootout", 1.0))
 
     if record_parity > 0.85 and avg_win_pct > 0.50:
         badges.append(("evenly matched", 1.2))
@@ -75,7 +100,9 @@ def calculate_watchability(
     if home_stars_dtd >= 1 or away_stars_dtd >= 1:
         badges.append(("star questionable", -0.5))
 
-    if spread_abs >= 12:
+    if spread_abs >= 15:
+        badges.append(("garbage time likely", -2.5))
+    elif spread_abs >= 12:
         badges.append(("potential blowout", -1.8))
     elif spread_abs >= 9:
         badges.append(("lopsided matchup", -1.0))
@@ -85,6 +112,9 @@ def calculate_watchability(
 
     if home_b2b or away_b2b:
         badges.append(("back-to-back fatigue", -0.8))
+
+    if home_3in4 or away_3in4:
+        badges.append(("3rd in 4 nights", -0.6))
 
     if abs(home_rest_days - away_rest_days) >= 3:
         badges.append(("rest disadvantage", -0.6))
@@ -174,11 +204,52 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     home_stars_dtd = match_injury(home_star_names, all_dtd)
     away_stars_dtd = match_injury(away_star_names, all_dtd)
 
+    # 3-in-4 nights detection
+    def games_in_last_n_days(team_id, n):
+        cutoff = game_date - pd.Timedelta(days=n)
+        return len(games_df[
+            ((games_df["home_id"] == team_id) | (games_df["away_id"] == team_id)) &
+            (games_df["date"] < game_date) &
+            (games_df["date"] >= cutoff)
+        ])
+
+    home_3in4 = games_in_last_n_days(home_id, 4) >= 2
+    away_3in4 = games_in_last_n_days(away_id, 4) >= 2
+
+    # Top star avg (highest scorer on each team)
+    home_top_star_avg = max([avg for _, avg in home_star_names], default=0)
+    away_top_star_avg = max([avg for _, avg in away_star_names], default=0)
+
+    # Avg pts (from rolling stats)
+    home_avg_pts = home_stats["avg_pts"]
+    away_avg_pts = away_stats["avg_pts"]
+
+    # Conference rank (simplified - rank by win pct within last season)
+    # For now use a rough proxy: top 2 = win_pct > 0.65, otherwise default to 15
+    home_conf_rank = 1 if home_win_pct >= 0.70 else (2 if home_win_pct >= 0.62 else 15)
+    away_conf_rank = 1 if away_win_pct >= 0.70 else (2 if away_win_pct >= 0.62 else 15)
+
+    # Playoff round detection - simple month-based rules
+    # Finals: June (or very late May with low game num)
+    # Conf Finals: mid-to-late May
+    # Earlier rounds: April through early May
+    playoff_round = None
+    if is_playoffs:
+        if month == 6:
+            playoff_round = "Finals"
+        elif month == 5 and game_date.day >= 14:
+            playoff_round = "WCF"  # conference finals (treated same as ECF)
+
+    # Elimination game - we don't have series state available, leave False for now
+    elimination_game = False
+
     watchability, raw, record_parity, tanking, star_power_norm, reasons, all_badges = calculate_watchability(
         spread_abs=spread_abs,
         total=total_val,
         is_playoffs=is_playoffs,
         playoff_game_num=playoff_game_num,
+        playoff_round=playoff_round,
+        elimination_game=elimination_game,
         home_win_pct=home_win_pct,
         away_win_pct=away_win_pct,
         home_win_streak=home_win_streak,
@@ -187,9 +258,17 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         away_b2b=away_b2b,
         home_rest_days=home_rest_days,
         away_rest_days=away_rest_days,
+        home_3in4=home_3in4,
+        away_3in4=away_3in4,
         month=month,
         home_star_power=home_star_power,
         away_star_power=away_star_power,
+        home_top_star_avg=home_top_star_avg,
+        away_top_star_avg=away_top_star_avg,
+        home_avg_pts=home_avg_pts,
+        away_avg_pts=away_avg_pts,
+        home_conf_rank=home_conf_rank,
+        away_conf_rank=away_conf_rank,
         home_stars_out=home_stars_out,
         away_stars_out=away_stars_out,
         home_stars_dtd=home_stars_dtd,
