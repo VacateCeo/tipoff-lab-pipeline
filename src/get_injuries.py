@@ -44,8 +44,8 @@ def get_injuries():
         if out_players or dtd_players:
             injuries[tricode] = {'out': out_players, 'dtd': dtd_players}
             if out_players:
-                print(f'  {tricode} OUT: {', '.join(out_players)}')
+                print(f"  {tricode} OUT: {', '.join(out_players)}")
             if dtd_players:
-                print(f'  {tricode} DTD: {', '.join(dtd_players)}')
+                print(f"  {tricode} DTD: {', '.join(dtd_players)}")
 
     return injuries
