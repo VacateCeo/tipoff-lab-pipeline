@@ -136,7 +136,20 @@ def run_daily_update(game_date=None):
         print("No games today, exiting.")
         return
 
-    odds_map = get_odds()
+    # Only fetch odds once per day (expensive API call)
+    from datetime import datetime
+    current_hour = datetime.utcnow().hour
+
+    # Check if we already have odds for today's games
+    existing = supabase.table("predictions").select("home_team,away_team,spread,total").eq("game_date", game_date).execute()
+    existing_odds = {(r["home_team"], r["away_team"]): (r["spread"], r["total"]) for r in existing.data if r.get("spread") is not None}
+
+    if existing_odds and len(existing_odds) == len(matchups_raw):
+        print("Using cached odds from Supabase.")
+        odds_map = existing_odds
+    else:
+        print("Fetching fresh odds from API...")
+        odds_map = get_odds()
 
     print("Fetching injury report...")
     team_injuries = get_injuries()
