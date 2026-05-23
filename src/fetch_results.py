@@ -19,13 +19,21 @@ ESPN_TRICODE_FIX = {
 def normalize_tricode(code):
     return ESPN_TRICODE_FIX.get(code, code)
 
-def compute_excitement(win_probabilities):
+def compute_excitement(win_probabilities, status_detail=None):
     if not win_probabilities:
         return None
     probs = [p['homeWinPercentage'] for p in win_probabilities]
 
-    went_ot = len(probs) > 470
-    went_double_ot = len(probs) > 540
+    # Detect OT from status detail string (e.g. "Final/OT", "Final/2OT")
+    went_ot = False
+    went_double_ot = False
+    if status_detail:
+        detail_lower = status_detail.lower()
+        if '2ot' in detail_lower or 'double' in detail_lower:
+            went_double_ot = True
+            went_ot = True
+        elif '/ot' in detail_lower or 'overtime' in detail_lower:
+            went_ot = True
 
     # Skip first 20% of plays so tipoff 50/50 doesn't inflate min_wp
     start = int(len(probs) * 0.20)
@@ -40,7 +48,6 @@ def compute_excitement(win_probabilities):
     crunch_avg_distance = float(np.mean([abs(p - 0.5) for p in crunch]))
     min_wp = float(min([abs(p - 0.5) for p in probs_trimmed]))
 
-    # min_wp now = how close game got to 50/50 AFTER early game
     excitement = (1 - crunch_avg_distance) * 7 + (1 - min_wp * 2) * 3
 
     if went_double_ot:
@@ -73,7 +80,8 @@ def fetch_game_result(event_id):
                 away_tri = tri
 
         wp = d.get('winprobability', [])
-        excitement = compute_excitement(wp)
+        status_detail = comps.get('status', {}).get('type', {}).get('detail', '')
+        excitement = compute_excitement(wp, status_detail)
         final_margin = abs(home_score - away_score) if home_score and away_score else None
 
         return {
