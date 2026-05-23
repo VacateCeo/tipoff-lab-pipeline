@@ -1,28 +1,21 @@
-name: Daily NBA Predictions
-
+name: NBA Predictions Update
 on:
   schedule:
-    - cron: '30 6 * * *'  # 6:30 AM UTC = 11:30 PM PT — fetch previous night results
-    - cron: '0 7 * * *'   # 7:00 AM UTC = 12:00 AM PT — daily predictions
-    - cron: '0 14 * * *'  # 2:00 PM UTC = 7:00 AM PT — backup results fetch
-  workflow_dispatch:  # allows manual trigger from GitHub
+    - cron: '0 * * * *'  # Every hour
+  workflow_dispatch:
 
 jobs:
   update:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Run daily update
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -41,7 +34,7 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Fetch yesterday's results
+      - name: Fetch results
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
