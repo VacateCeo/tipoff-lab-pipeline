@@ -124,6 +124,7 @@ def run_daily_update(game_date=None):
     if game_date is None:
         game_date = date.today().strftime("%Y-%m-%d")
     print(f"Running daily update for {game_date}...")
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
     print("Loading model and data...")
     with open("data/model.pkl", "rb") as f:
@@ -168,7 +169,6 @@ def run_daily_update(game_date=None):
     for r in results:
         print(f"  {r['watchability']:.1f}/10 - {r['away_team']} @ {r['home_team']}: {r['reasons']}")
 
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     supabase.table("predictions").delete().eq("game_date", str(game_date)).execute()
 
     rows = []
