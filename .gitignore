@@ -1,7 +1,13 @@
 .env
 __pycache__/
 *.pyc
+*.pyo
 test_*.py
 .claude/
+
+# Data files — regenerated locally, not committed
 data/*.parquet
 data/*.pkl
+data/*.csv
+data/*.htm
+data/pbp/
