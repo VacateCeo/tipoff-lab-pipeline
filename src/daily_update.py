@@ -15,6 +15,7 @@ from get_injuries import get_injuries
 from get_standings import get_standings
 from get_schedule import get_schedule_stats
 from get_player_stats import get_player_stats
+from cache_manager import save_cache, load_cache
 
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -156,10 +157,16 @@ def run_daily_update(game_date=None):
         odds_map = get_odds()
 
     print("Fetching standings...")
-    standings = get_standings()
+    standings = load_cache("standings")
+    if standings is None:
+        standings = get_standings()
+        save_cache("standings", standings)
 
     print("Fetching player stats...")
-    player_stats = get_player_stats()
+    player_stats = load_cache("player_stats")
+    if player_stats is None:
+        player_stats = get_player_stats()
+        save_cache("player_stats", player_stats)
 
     print("Fetching injury report...")
     team_injuries = get_injuries()
