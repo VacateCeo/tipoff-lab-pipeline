@@ -13,6 +13,7 @@ from build_features import get_rolling_team_stats
 from predict import predict_today
 from get_injuries import get_injuries
 from get_standings import get_standings
+from get_schedule import get_schedule_stats
 
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")

@@ -8,6 +8,7 @@ from build_features import (
     get_team_star_power,
     get_team_star_names,
 )
+from get_schedule import get_schedule_stats
 
 
 def calculate_watchability(
@@ -153,17 +154,15 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         print("Not enough historical data for one of the teams")
         return None
 
-    prev_home = games_df[
-        ((games_df["home_id"] == home_id) | (games_df["away_id"] == home_id)) &
-        (games_df["date"] < game_date)
-    ]["date"]
-    home_rest = (game_date - prev_home.max()).days if len(prev_home) > 0 else 7
-
-    prev_away = games_df[
-        ((games_df["home_id"] == away_id) | (games_df["away_id"] == away_id)) &
-        (games_df["date"] < game_date)
-    ]["date"]
-    away_rest = (game_date - prev_away.max()).days if len(prev_away) > 0 else 7
+    # Live schedule data for rest days, b2b, 3in4
+    game_date_str = game_date.strftime("%Y-%m-%d")
+    home_schedule, away_schedule = get_schedule_stats(home_team, away_team, game_date_str)
+    home_rest_days = home_schedule["rest_days"]
+    away_rest_days = away_schedule["rest_days"]
+    home_b2b = home_schedule["b2b"]
+    away_b2b = away_schedule["b2b"]
+    home_3in4 = home_schedule["3in4"]
+    away_3in4 = away_schedule["3in4"]
 
     # Use live standings if available, fall back to games.parquet
     if home_team in standings:
@@ -191,10 +190,6 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
         away_avg_pts_allowed = away_stats["avg_pts_allowed"]
         away_win_streak = get_win_streak(games_df, away_id, game_date)
         away_conf_rank = 1 if away_win_pct >= 0.70 else (2 if away_win_pct >= 0.62 else 15)
-    home_rest_days = min(home_rest, 7)
-    away_rest_days = min(away_rest, 7)
-    home_b2b = home_rest <= 1
-    away_b2b = away_rest <= 1
     month = game_date.month
     is_playoffs = month in (4, 5, 6)
     spread_abs = abs(spread) if spread is not None else 6.0
@@ -225,18 +220,6 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     away_stars_out = match_injury(away_star_names, all_out)
     home_stars_dtd = match_injury(home_star_names, all_dtd)
     away_stars_dtd = match_injury(away_star_names, all_dtd)
-
-    # 3-in-4 nights detection
-    def games_in_last_n_days(team_id, n):
-        cutoff = game_date - pd.Timedelta(days=n)
-        return len(games_df[
-            ((games_df["home_id"] == team_id) | (games_df["away_id"] == team_id)) &
-            (games_df["date"] < game_date) &
-            (games_df["date"] >= cutoff)
-        ])
-
-    home_3in4 = games_in_last_n_days(home_id, 4) >= 2
-    away_3in4 = games_in_last_n_days(away_id, 4) >= 2
 
     # Top star avg (highest scorer on each team)
     home_top_star_avg = max([avg for _, avg in home_star_names], default=0)
