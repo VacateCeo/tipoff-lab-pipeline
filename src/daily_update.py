@@ -14,6 +14,7 @@ from predict import predict_today
 from get_injuries import get_injuries
 from get_standings import get_standings
 from get_schedule import get_schedule_stats
+from get_player_stats import get_player_stats
 
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -157,6 +158,9 @@ def run_daily_update(game_date=None):
     print("Fetching standings...")
     standings = get_standings()
 
+    print("Fetching player stats...")
+    player_stats = get_player_stats()
+
     print("Fetching injury report...")
     team_injuries = get_injuries()
 
@@ -165,7 +169,7 @@ def run_daily_update(game_date=None):
         spread, total = odds_map.get((home, away), (None, None))
         matchups.append((home, away, spread, total, playoff_game_num))
 
-    results = predict_today(game_date, matchups, games, model, team_injuries=team_injuries, standings=standings)
+    results = predict_today(game_date, matchups, games, model, team_injuries=team_injuries, standings=standings, player_stats=player_stats)
     if not results:
         print("No predictions generated.")
         return

@@ -134,7 +134,7 @@ def calculate_watchability(
     return score, raw_score, record_parity, (home_win_pct < 0.35 and away_win_pct < 0.35 and month in [3, 4]), min(1, combined_star_power / 150), top_badges, all_badges
 
 
-def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None, playoff_game_num=0, team_injuries={}, standings={}):
+def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None, playoff_game_num=0, team_injuries={}, standings={}, player_stats={}):
     game_date = pd.Timestamp(game_date)
 
     home_row = games_df[games_df["home_team"] == home_team].head(1)
@@ -196,10 +196,24 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     default_total = 210.0 if is_playoffs else 217.0
     total_val = total if total is not None else default_total
 
-    home_star_power = get_team_star_power(games_df, home_id, game_date)
-    away_star_power = get_team_star_power(games_df, away_id, game_date)
-    home_star_names = get_team_star_names(games_df, home_id, game_date)
-    away_star_names = get_team_star_names(games_df, away_id, game_date)
+    # Use live player stats if available, fall back to games.parquet
+    if home_team in player_stats:
+        home_star_power = player_stats[home_team]["star_power"]
+        home_top_star_avg = player_stats[home_team]["top_star_avg"]
+        home_star_names = player_stats[home_team]["star_names"]
+    else:
+        home_star_power = get_team_star_power(games_df, home_id, game_date)
+        home_top_star_avg = max([avg for _, avg in get_team_star_names(games_df, home_id, game_date)], default=0)
+        home_star_names = get_team_star_names(games_df, home_id, game_date)
+
+    if away_team in player_stats:
+        away_star_power = player_stats[away_team]["star_power"]
+        away_top_star_avg = player_stats[away_team]["top_star_avg"]
+        away_star_names = player_stats[away_team]["star_names"]
+    else:
+        away_star_power = get_team_star_power(games_df, away_id, game_date)
+        away_top_star_avg = max([avg for _, avg in get_team_star_names(games_df, away_id, game_date)], default=0)
+        away_star_names = get_team_star_names(games_df, away_id, game_date)
     home_injured = team_injuries.get(home_team, {})
     away_injured = team_injuries.get(away_team, {})
     all_out = set(home_injured.get('out', []) + away_injured.get('out', []))
@@ -220,10 +234,6 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     away_stars_out = match_injury(away_star_names, all_out)
     home_stars_dtd = match_injury(home_star_names, all_dtd)
     away_stars_dtd = match_injury(away_star_names, all_dtd)
-
-    # Top star avg (highest scorer on each team)
-    home_top_star_avg = max([avg for _, avg in home_star_names], default=0)
-    away_top_star_avg = max([avg for _, avg in away_star_names], default=0)
 
     # Playoff round detection - simple month-based rules
     # Finals: June (or very late May with low game num)
@@ -284,10 +294,10 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     }
 
 
-def predict_today(game_date, matchups, games_df, model, team_injuries={}, standings={}):
+def predict_today(game_date, matchups, games_df, model, team_injuries={}, standings={}, player_stats={}):
     results = []
     for home, away, spread, total, playoff_game_num in matchups:
-        result = predict_game(home, away, game_date, games_df, model, spread, total, playoff_game_num, team_injuries, standings)
+        result = predict_game(home, away, game_date, games_df, model, spread, total, playoff_game_num, team_injuries, standings, player_stats)
         if result:
             results.append(result)
     results.sort(key=lambda x: x["watchability"], reverse=True)
