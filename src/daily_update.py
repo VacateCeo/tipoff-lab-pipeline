@@ -12,6 +12,7 @@ sys.path.insert(0, "src")
 from build_features import get_rolling_team_stats
 from predict import predict_today
 from get_injuries import get_injuries
+from get_standings import get_standings
 
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -152,6 +153,9 @@ def run_daily_update(game_date=None):
         print("Fetching fresh odds from API...")
         odds_map = get_odds()
 
+    print("Fetching standings...")
+    standings = get_standings()
+
     print("Fetching injury report...")
     team_injuries = get_injuries()
 
@@ -160,7 +164,7 @@ def run_daily_update(game_date=None):
         spread, total = odds_map.get((home, away), (None, None))
         matchups.append((home, away, spread, total, playoff_game_num))
 
-    results = predict_today(game_date, matchups, games, model, team_injuries=team_injuries)
+    results = predict_today(game_date, matchups, games, model, team_injuries=team_injuries, standings=standings)
     if not results:
         print("No predictions generated.")
         return

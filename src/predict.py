@@ -133,7 +133,7 @@ def calculate_watchability(
     return score, raw_score, record_parity, (home_win_pct < 0.35 and away_win_pct < 0.35 and month in [3, 4]), min(1, combined_star_power / 150), top_badges, all_badges
 
 
-def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None, playoff_game_num=0, team_injuries={}):
+def predict_game(home_team, away_team, game_date, games_df, model, spread=None, total=None, playoff_game_num=0, team_injuries={}, standings={}):
     game_date = pd.Timestamp(game_date)
 
     home_row = games_df[games_df["home_team"] == home_team].head(1)
@@ -165,8 +165,32 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     ]["date"]
     away_rest = (game_date - prev_away.max()).days if len(prev_away) > 0 else 7
 
-    home_win_pct = home_stats["win_pct"]
-    away_win_pct = away_stats["win_pct"]
+    # Use live standings if available, fall back to games.parquet
+    if home_team in standings:
+        home_win_pct = standings[home_team]["win_pct"]
+        home_avg_pts = standings[home_team]["avg_pts"]
+        home_avg_pts_allowed = standings[home_team]["avg_pts_allowed"]
+        home_win_streak = standings[home_team]["win_streak"]
+        home_conf_rank = standings[home_team]["conf_rank"]
+    else:
+        home_win_pct = home_stats["win_pct"]
+        home_avg_pts = home_stats["avg_pts"]
+        home_avg_pts_allowed = home_stats["avg_pts_allowed"]
+        home_win_streak = get_win_streak(games_df, home_id, game_date)
+        home_conf_rank = 1 if home_win_pct >= 0.70 else (2 if home_win_pct >= 0.62 else 15)
+
+    if away_team in standings:
+        away_win_pct = standings[away_team]["win_pct"]
+        away_avg_pts = standings[away_team]["avg_pts"]
+        away_avg_pts_allowed = standings[away_team]["avg_pts_allowed"]
+        away_win_streak = standings[away_team]["win_streak"]
+        away_conf_rank = standings[away_team]["conf_rank"]
+    else:
+        away_win_pct = away_stats["win_pct"]
+        away_avg_pts = away_stats["avg_pts"]
+        away_avg_pts_allowed = away_stats["avg_pts_allowed"]
+        away_win_streak = get_win_streak(games_df, away_id, game_date)
+        away_conf_rank = 1 if away_win_pct >= 0.70 else (2 if away_win_pct >= 0.62 else 15)
     home_rest_days = min(home_rest, 7)
     away_rest_days = min(away_rest, 7)
     home_b2b = home_rest <= 1
@@ -177,8 +201,6 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     default_total = 210.0 if is_playoffs else 217.0
     total_val = total if total is not None else default_total
 
-    home_win_streak = get_win_streak(games_df, home_id, game_date)
-    away_win_streak = get_win_streak(games_df, away_id, game_date)
     home_star_power = get_team_star_power(games_df, home_id, game_date)
     away_star_power = get_team_star_power(games_df, away_id, game_date)
     home_star_names = get_team_star_names(games_df, home_id, game_date)
@@ -219,15 +241,6 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     # Top star avg (highest scorer on each team)
     home_top_star_avg = max([avg for _, avg in home_star_names], default=0)
     away_top_star_avg = max([avg for _, avg in away_star_names], default=0)
-
-    # Avg pts (from rolling stats)
-    home_avg_pts = home_stats["avg_pts"]
-    away_avg_pts = away_stats["avg_pts"]
-
-    # Conference rank (simplified - rank by win pct within last season)
-    # For now use a rough proxy: top 2 = win_pct > 0.65, otherwise default to 15
-    home_conf_rank = 1 if home_win_pct >= 0.70 else (2 if home_win_pct >= 0.62 else 15)
-    away_conf_rank = 1 if away_win_pct >= 0.70 else (2 if away_win_pct >= 0.62 else 15)
 
     # Playoff round detection - simple month-based rules
     # Finals: June (or very late May with low game num)
@@ -288,13 +301,12 @@ def predict_game(home_team, away_team, game_date, games_df, model, spread=None, 
     }
 
 
-def predict_today(game_date, matchups, games_df, model, team_injuries={}):
+def predict_today(game_date, matchups, games_df, model, team_injuries={}, standings={}):
     results = []
     for home, away, spread, total, playoff_game_num in matchups:
-        result = predict_game(home, away, game_date, games_df, model, spread, total, playoff_game_num, team_injuries)
+        result = predict_game(home, away, game_date, games_df, model, spread, total, playoff_game_num, team_injuries, standings)
         if result:
             results.append(result)
-
     results.sort(key=lambda x: x["watchability"], reverse=True)
     return results
 
